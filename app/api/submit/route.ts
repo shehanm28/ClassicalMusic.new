@@ -72,9 +72,9 @@ async function sendToKit(params: {
       first_name: params.name ?? "",
       email_address: params.email,
       fields: {
-        "Piece Idea": params.description,
-        Genre: params.resolvedGenre,
-        Source: "classicalmusic.new",
+        piece_idea: params.description,
+        genre: params.resolvedGenre,
+        source: "classicalmusic.new",
       },
     }),
   });
