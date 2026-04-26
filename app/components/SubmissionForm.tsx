@@ -19,21 +19,24 @@ type Genre = (typeof GENRES)[number];
 const MAX_DESCRIPTION = 280;
 const MAX_NAME = 100;
 const MAX_OTHER_GENRE = 100;
+const MAX_EMAIL = 254;
 
 export default function SubmissionForm() {
   const [description, setDescription] = useState("");
   const [genre, setGenre] = useState<Genre | "">("");
   const [otherGenre, setOtherGenre] = useState("");
+  const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [status, setStatus] = useState<
     "idle" | "submitting" | "success" | "error"
   >("idle");
+  const [emailSent, setEmailSent] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
 
-    if (!description.trim() || !genre) return;
+    if (!description.trim() || !genre || !email.trim()) return;
     if (genre === "Other" && !otherGenre.trim()) return;
 
     setStatus("submitting");
@@ -47,11 +50,14 @@ export default function SubmissionForm() {
           description: description.trim(),
           genre,
           otherGenre: genre === "Other" ? otherGenre.trim() : undefined,
+          email: email.trim(),
           name: name.trim() || undefined,
         }),
       });
 
       if (res.ok) {
+        const data = await res.json().catch(() => null);
+        setEmailSent(data?.emailSent !== false);
         setStatus("success");
       } else {
         const data = await res.json().catch(() => null);
@@ -69,11 +75,23 @@ export default function SubmissionForm() {
   if (status === "success") {
     return (
       <div className="rounded-xl border border-border bg-success-bg p-8 text-center">
-        <p className="font-serif text-xl font-semibold">Thank you!</p>
+        <p className="font-serif text-xl font-semibold">
+          Your idea has been submitted!
+        </p>
         <p className="mt-3 leading-relaxed text-muted">
-          Your new entry has been created in our database of desired
-          commissions. Thank you for your input! It helps guide our
-          commissioning decisions based on audience interest.
+          {emailSent ? (
+            <>Check your inbox – we sent you a receipt with your idea.</>
+          ) : (
+            <>
+              We&apos;ve saved your idea. Your receipt email may be delayed –
+              keep an eye on your inbox.
+            </>
+          )}
+        </p>
+        <p className="mt-3 leading-relaxed text-muted">
+          We&apos;ll keep you posted around once a month on how the
+          commissioning is going, and we&apos;ll let you know if we commission
+          your work.
         </p>
         <button
           type="button"
@@ -81,7 +99,9 @@ export default function SubmissionForm() {
             setDescription("");
             setGenre("");
             setOtherGenre("");
+            setEmail("");
             setName("");
+            setEmailSent(true);
             setStatus("idle");
           }}
           className="mt-6 text-sm font-medium text-accent underline underline-offset-4 hover:text-foreground"
@@ -168,6 +188,28 @@ export default function SubmissionForm() {
           />
         </div>
       )}
+
+      {/* Email */}
+      <div>
+        <label htmlFor="email" className="mb-1.5 block text-sm font-medium">
+          Your email <span className="text-accent">*</span>
+        </label>
+        <input
+          id="email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value.slice(0, MAX_EMAIL))}
+          placeholder="you@example.com"
+          maxLength={MAX_EMAIL}
+          autoComplete="email"
+          required
+          className="w-full rounded-lg border border-border bg-input-bg px-4 py-3 text-foreground placeholder:text-muted/60 focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none"
+        />
+        <p className="mt-1.5 text-xs leading-relaxed text-muted">
+          We&apos;ll only email you a receipt and occasional updates
+          (~monthly). Unsubscribe anytime.
+        </p>
+      </div>
 
       {/* Name */}
       <div>
