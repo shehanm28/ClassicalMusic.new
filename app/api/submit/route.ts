@@ -16,8 +16,11 @@ const ALLOWED_GENRES = [
 const MAX_DESCRIPTION = 280;
 const MAX_NAME = 100;
 const MAX_OTHER_GENRE = 100;
+const MAX_EMAIL = 254;
 const RATE_LIMIT = 5;
 const RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // In-memory rate limiter (resets on redeploy)
 const ipTimestamps = new Map<string, number[]>();
@@ -42,6 +45,65 @@ function getClientIp(req: NextRequest): string {
   );
 }
 
+async function sendToKit(params: {
+  email: string;
+  name: string | undefined;
+  description: string;
+  resolvedGenre: string;
+}): Promise<boolean> {
+  const apiKey = process.env.KIT_API_KEY;
+  const formId = process.env.KIT_FORM_ID;
+
+  if (!apiKey || !formId) {
+    console.warn("Kit env vars missing; skipping Kit integration.");
+    return false;
+  }
+
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Kit-Api-Key": apiKey,
+  };
+
+  // Step 1: Create or update subscriber with custom fields
+  const createRes = await fetch("https://api.kit.com/v4/subscribers", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      first_name: params.name ?? "",
+      email_address: params.email,
+      fields: {
+        "Piece Idea": params.description,
+        Genre: params.resolvedGenre,
+        Source: "classicalmusic.new",
+      },
+    }),
+  });
+
+  if (!createRes.ok) {
+    const text = await createRes.text().catch(() => "");
+    console.error("Kit create subscriber failed:", createRes.status, text);
+    return false;
+  }
+
+  // Step 2: Add subscriber to form (triggers incentive email)
+  const addRes = await fetch(
+    `https://api.kit.com/v4/forms/${encodeURIComponent(formId)}/subscribers`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ email_address: params.email }),
+    }
+  );
+
+  if (!addRes.ok) {
+    const text = await addRes.text().catch(() => "");
+    console.error("Kit add to form failed:", addRes.status, text);
+    return false;
+  }
+
+  return true;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const ip = getClientIp(req);
@@ -60,7 +122,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { description, genre, otherGenre, name } = body;
+    const { description, genre, otherGenre, email, name } = body;
 
     // Validate description
     if (
@@ -98,6 +160,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Validate email
+    if (
+      typeof email !== "string" ||
+      email.trim().length === 0 ||
+      email.trim().length > MAX_EMAIL ||
+      !EMAIL_REGEX.test(email.trim())
+    ) {
+      return NextResponse.json(
+        { error: "Please enter a valid email address." },
+        { status: 400 }
+      );
+    }
+
     // Validate name (optional)
     if (name !== undefined && name !== null) {
       if (typeof name !== "string" || name.trim().length > MAX_NAME) {
@@ -121,12 +196,14 @@ export async function POST(req: NextRequest) {
 
     const resolvedGenre =
       genre === "Other" ? otherGenre.trim() : genre;
-    const resolvedName =
-      name && typeof name === "string" && name.trim() ? name.trim() : "Anonymous";
+    const trimmedName =
+      name && typeof name === "string" && name.trim() ? name.trim() : "";
+    const resolvedName = trimmedName || "Anonymous";
+    const trimmedEmail = email.trim();
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: "Sheet1!A:D",
+      range: "Sheet1!A:E",
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [
@@ -135,12 +212,26 @@ export async function POST(req: NextRequest) {
             resolvedName,
             resolvedGenre,
             description.trim(),
+            trimmedEmail,
           ],
         ],
       },
     });
 
-    return NextResponse.json({ success: true });
+    // Kit integration is best-effort; sheet row is the source of truth
+    let emailSent = false;
+    try {
+      emailSent = await sendToKit({
+        email: trimmedEmail,
+        name: trimmedName || undefined,
+        description: description.trim(),
+        resolvedGenre,
+      });
+    } catch (kitError) {
+      console.error("Kit integration error:", kitError);
+    }
+
+    return NextResponse.json({ success: true, emailSent });
   } catch (error) {
     console.error("Submission error:", error);
     return NextResponse.json(
